@@ -1,0 +1,687 @@
+---
+title: "Nominal Categorical Response in Regression-Based Analysis"
+author: "Benjamin Bui"
+date: "May 20, 2024"
+output: word_document
+bibliography: bibliography.bib
+csl: https://www.zotero.org/styles/apa-with-abstract?source=1
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{amsthm}
+  - \usepackage{amssymb}
+  - \usepackage{listings}
+  - \usepackage{siunitx}
+  - \lstset{language=R}
+---
+
+```{r, include = FALSE}
+library(knitr)
+knit_print.data.frame <- function(x, ...) {
+  res <- paste(c("", "", kable(x)), collapse = "\n")
+  asis_output(res)
+}
+# register the method
+registerS3method("knit_print", "data.frame", knit_print.data.frame)
+library(magrittr)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+```
+# Introduction
+
+Categorical variables provide an inherent problem when attempting to describe relationships mathematically. Many 
+analyses we run involve regression analysis which requires that \textbf{ALL} variables be treated numerically. The
+simple sounding solution to categorical variables then is to convert them into a numeric, either via a direct scale
+mapping or by converting to \{0,1\} dummy variables. This memo argues why broad application of this practice is
+problematic statistically and offers alternative solutions to the issue.
+
+For those just looking to see the suggested methods for dealing with nominal categorical variables, please skip ahead
+to section titled "How to avoid dummy response variables".
+
+# Categorical variables, in general and in $R$
+
+## What is a categorical and dummy variable?
+
+For our purposes, we can characterize variables as one of three types: quantitative, nominal categorical, ordinal 
+categorical.
+
+```{r, fig.align = "center"}
+variable_tree <- DiagrammeR::grViz("
+digraph variable_tree {
+  node [shape = none]
+  variable; quantitative; categorical; nominal; ordinal
+    variable -> quantitative
+    variable -> categorical
+    categorical -> nominal
+    categorical -> ordinal
+}
+")
+variable_tree_path <- tempfile()
+variable_tree %>%
+  export_svg() %>%
+  charToRaw() %>%
+  rsvg_png(variable_tree_path)
+knitr::include_graphics(variable_tree_path)
+```
+
+A variable is quantitative if it is inherently ordered and have an internally consistent, scalable definition of
+difference. For example, consider a variable representing age. 
+
+For our purposes, we can characterize data as being either categorical and quantitative although both of these terms
+have potential for misunderstanding. A variable is quantitative if it is inherently ordered and have an internally
+consistent, scalable definition of difference. A variable is categorical if all of its values are disjoint, and it does
+not necessarily have a scalable definition of difference; however, a categorical variable can be 
+ordered [@SINHARAY20101].
+
+
+It is important to consider that many variables can be interpreted to be of either category. For example, consider
+age in the form of number of years. This variable can be interpreted as quantitative and is often encoded as just a
+number. However, it can be encoded as a categorical without loss of information, as in the case when we make a variable
+designating if a child is 3 or 4 years old. Likert scales are a classic example of an ordered categorical variable;
+however, these are often re-encoded into 1-5 scales for the purposes of measure creation or aggregation despite the 
+lack of rigor in ensuring that the difference between "Strongly Disagree" and "Disagree" is exactly the same as 
+"Disagree" and "Indifferent". Unordered categorical variables like race appear safer to this mess of ambiguity but
+even these can be thought of as quantitative through the use of dummy variables.
+
+Dummy variables serve as a multivariate encoding of a univariate categorical variable where each dummy variable
+corresponds to a specific possible value of the categorical variable. Dummy variables are typically coded with a value 
+space of 0, 1 and `NA` or the language equivalent missing for their convenient mathematical properties. It is
+typical for a variable with $n$ possible values to create $n$ new variables; however, creating $n-1$ variables contains
+the same amount of information for reasons we'll get into later.
+
+## Variable Types as $R$ classes
+
+These 3 types of variables: quantitative, ordinal categorical, and nominal (unordered) categoricals are actually treated
+as separate classes of vector in R. Quantitative variables should be represented by the numeric class (which isn't
+technically a class but that distinction doesn't matter here), nominal categorical variables  should be represented by
+the factor class and ordered categorical variables should be possess both the "ordered" and "factor" classes. 
+
+To clear up a potentially very impactful misunderstanding, we need to discuss ordered factors. As stated previously,
+these are used to encode ordinal categoricals. Because of the analytical implications when using ordered factors, I do
+\textbf{NOT} recommend re-classing variables as ordered factors unless you know that the corresponding implications.
+Skip ahead if you don't want to learn about how these classes work internally.
+
+### A slightly deeper dive in factors and their implementation in $R$
+
+R has 25 different types of vectors at its lowest, most relevant here are `integer`, `double`,
+and `character` [@WICKHAM201912]. Notably, `factor` is not included here because factors are actually
+implemented as an `integer` vector with the addition of an attribute called `levels`. The 
+`levels` attribute is assigned a character vector representing the sample space of your categorical variable.
+The `integer` vector component effectively functions as the actual storage of the data and the 
+`levels` attribute serves as a map between the integers and what they actually represent. Unless the factor
+is `ordered`, the integers do **NOT** store or intend any meaning as a number. Thy are only stored as
+`integer` because it is space efficient to do so. This implementation, incidentally, is what makes the factor
+much more space efficient in the storage of large amount of character data provided there is sufficient replication of
+values. Adding `ordered` as a class to a factor, usually by setting `ordered = TRUE` when defining
+a factor just adds `ordered` as a class but doesn't do anything else to the underlying implementation.
+
+The difference arises when we use these variables as predictors in a model. We'll go into more detail later but as an 
+example, `stats::lm` coerces plain `factor` into $n_{factor\_levels}-1$ dummy variables and runs
+the model normally but an ordered `factor` is actually treated with a polynomial model. Neither treatment
+is inherently wrong, it is just important that you select the appropriate method for your data and purpose.
+
+The crux of this confusions arises because the order of strings in the `levels` attribute in an unordered
+`factor` does have practical meaning even if it doesn't have a mathematical or statistical meaning. For
+example, if we want to sort a dataset or plot such that certain values of a categorical variable appear first,
+then a simple way to do this is by explicitly setting the `levels` such that the values we want to see first
+are first in the input `character` vector. The first value in the `levels` attribute is also used
+when calculating contrasts as the "baseline". This doesn't at all change the computation of the model but it does affect
+the direct interpretability of coefficients. Again though, unless you desire the resulting analytical
+implications, you shouldn't add the `ordered` class to your factor when doing this, just changing the 
+`levels` attribute is sufficient.
+
+# Why not to use dummy variables
+
+The proper treatment of ordinal categorical variables is outside of the scope of this memo. Ordinal categorical
+variables actually cannot naively reduced into dummy variables without the loss of the ordering so it is a bit of a moot
+point regardless.
+
+It is accepted practice to transform nominal categorical variables into dummy variables when used as a predictor
+variable; in fact, $R$ performs this step automatically if you include a `factor` as a predictor variable
+in your formula (although I do think it's important to note here that even this practice is vulnerable to "p-hacking"
+abuse). It seems logical then to just do the same with a response variable; just run the model 
+n_{factor\_levels} times for each dummy variable. First consider the non-rigorous implications if only 1 of  these
+analyses provides a statistically significant p-value Does that mean our research
+condition or explanatory variable only effectively predicts for one possible value of our categorical? That conclusion
+is somewhat difficult to reconcile with the tautological fact that the statistically significant case is necessarily 
+collinear with a set of non-statistically significant variables. This issue of interpretability suggests then that
+we would want a single, shared statistical test when evaluation a categorical variable such that we have a single
+measure of significance.
+
+Another important consideration pertains the implications of the definition of a p-value. To define in non-rigorous 
+terms, a p-value of 0.05 states that given the null hypothesis is true, there is a \SI{5}{\percent} chance that the
+actually found result could have occurred. Implicit with this is the fact that there is an underlying assumption that
+these observed differences can occur even if the null hypothesis is true in reality. This can be effectively abused,
+intentionally or otherwise, to generate significant p-values by running ever more hypothesis tests as 5%
+will satisfy our arbitrary condition by random chance [@Stefan2023]. Running a test on multiple dummy variables provides
+a seemingly innocent way to accomplish. Granted the actual mathematical implications are more complex than what I'm
+saying here because of the inherent collinearity present but below I present my case with simulated data.
+
+## P-value abuse with dummy responses
+
+Here I am making a dataset of nominal categorical variables in the form of factors. 
+
+```{r}
+suppressPackageStartupMessages(library(magrittr))
+suppressPackageStartupMessages(library(dplyr))
+# Setting random seed for consistency in reference
+set.seed(-1619558820)
+# Generating dataset with 5 nominal categorical variables drawn from a uniform
+# distribution
+test_categoricals <- data.frame(
+  Species = sample(factor(c("setosa", "versicolor", "virginica")),
+    1000,
+    replace = TRUE
+  ),
+  Cylinders = sample(factor(c("4", "6", "8")), 1000, replace = TRUE),
+  Letters = sample(factor(letters), 1000, replace = TRUE),
+  State = sample(factor(state.abb), 1000, replace = TRUE),
+  # The variable we are using as our independent
+  Intervention = sample(factor(c("Control", "Intervention")),
+    1000,
+    replace = TRUE
+  )
+)
+```
+
+```{r}
+# Creating dummied version of dataset
+test_dummies <- fastDummies::dummy_cols(
+  test_categoricals,
+  c("Species", "Cylinders", "State", "Letters"),
+  remove_selected_columns = TRUE
+)
+```
+
+A quick glance at the code above suggests that there is absolutely no relationship between the intervention group
+and any of the nominal categorical generated. Running a simple linear model and looking at the results suggests 
+otherwise.
+
+
+```{r}
+# Running linear model comparisons
+test_comparisons <- mdrcAnalysis::lm_extract(test_dummies,
+  .dependents = setdiff(
+    names(test_dummies),
+    "Intervention"
+  ),
+  .treatment = "Intervention",
+  .inc_sample = FALSE,
+  .inc_trail = FALSE
+)
+```
+
+Lets take a look at how the p-value stars are distributed. Remember again that the parametric truth of the dataset is
+that no differences are statistically significant.
+
+```{r, echo = FALSE}
+count(test_comparisons, `P-value Stars` = Stars_Intervention_Control)
+```
+
+This truth is shown in 75 of our 82 tests; however, there are 7 tests that display some significance with a p-value of 
+0.1 or lower, or 8.5% of the results. Taking a look at which tests display significance we see results
+that clearly look significant when viewed independently with some of our "Letters" and "State" dummy variable tests.
+However, it doesn't really make sense to say that this treatment affects whether the "Letters" variable is "f" or "n" but
+not any other variable. Using these dummy response variables doesn't provide a rigorous mechanism for us to seen or
+communicate the fact that these internally, statistically significant results should be see considering the absence
+of significance in the related dummy variables. Reporting on these dummies allow us to artificially generate
+statistically significant results, especially if these are reported without robust mention of the other, non-significant
+results.
+
+```{r, echo = FALSE}
+filter(
+  test_comparisons,
+  ProbT_Intervention_Control <= 0.1
+) %>%
+  select(Dependent,
+    `P-Value` = ProbT_Intervention_Control,
+    `Effect Size` = EffectSize_Control
+  )
+```
+
+If we report signifcant results while providing the context of the related, non-significant results then there is not
+very much problematic here, especially considering how inherently interpretive statistics as a field is. However, it
+would be preferable if there was a method that more rigorously accounted for the nuances of categorical variables.
+
+# How to avoid dummy response variables
+\
+After having hopefully cleared up why the use of dummy variables as a response variable is inherently problematic, we
+see that there is a need to analyze nominal categorical variables. The simplest solution is to just use the continuous
+variable instead of the categorical variable if there exist two analogous encodings of the same information. In fact,
+the selection of category boundaries itself is a method that, intentionally or not, can be used to generate false
+significance [@Stefan2023]. However, if we still want to or must use a categorical variable as our response, there 
+exist methods. Technically, binary dependent variables "should" be run with a logistic regression model although
+practically speaking, a linear model offers a "close enough" result with more simply interpretable results. Please see
+\href{https://mdrc365.sharepoint.com/sites/QuantMethods/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FQuantMethods%2FShared%20Documents%2FGuidance%2FQMG%2DMemo%2Don%2DBinary%2DOutcomes%20%28January%202024%29%2Epdf&parent=%2Fsites%2FQuantMethods%2FShared%20Documents%2FGuidance}{QMG memo on the topic}
+
+In the case of non-binary nominal categoricals the process is more complex. Below I offer two methods depending on
+the type of model you are running on the analogous quantitative variables. These focus on providing a technical
+guide on using R to calculate these results. 
+
+## The simple $\chi^2$ test
+
+Although a bit of an oversimplification, a $\chi^2$ test serves an analogous function to categorical variables as 
+a $t$-test is to quantitative variables. For the purposes of this memo, you would use a $\chi^2$ test when attempting
+to determine the relationship between two categorical variables, e.g. a race and your research group. It is not useful
+when attempting to account for other "covariates" in the relationship (although the related log-linear analysis can be
+used with $>2$ categorical variables, that's outside the current scope of this memo). These $\chi^2$ tests are 
+particularly used at MDRC for early investigations of data regarding baseline equivalence and non-response bias, both
+cases where there is a relatively clear categorical vs categorical relationship we are attempting to ascertain.
+
+Programming a $\chi^2$ test in $R$ is fairly simple. Here we are using the `mdrcAnalysis::sim_data_robust_reg`
+and comparing Employment (`employed_01`) and treatment group (`treatment`). Both of these are ${0,1}$
+dummy variables which also allows us to compare these $\chi^2$ results against a $t$-test treating them like
+quantitative variables.
+
+Here both variables are encoded as numerics. Note that this test requires passing of direct atomic vectors to the
+function, not a dataset and the names of the variables you want.
+```{r}
+data(sim_data_robust_reg, package = "mdrcAnalysis")
+chisq.test(
+  sim_data_robust_reg$employed_01,
+  sim_data_robust_reg$treatment
+)
+```
+
+However, `stats::chisq.test` does treat numeric variables equivalently to factor variables.
+
+```{r}
+chisq.test(
+  factor(sim_data_robust_reg$employed_01),
+  factor(sim_data_robust_reg$treatment)
+)
+```
+
+If you want to extract this data, say for output into Excel or a table, the simplest option is to use the
+`broom` package although direct subsetting is doable if there is a specific parameter you want.
+Please read `?stats::chisq.test` for details on what these columns are referring to.
+```{r}
+library(broom)
+tidy(chisq.test(
+  sim_data_robust_reg$employed_01,
+  sim_data_robust_reg$treatment
+))
+```
+
+If we compare these results to a two-sided $t$-test, we see reasonably different results.
+
+```{r}
+t.test(
+  sim_data_robust_reg$employed_01,
+  sim_data_robust_reg$treatment
+)
+```
+
+This example is given mostly to show how, some of the real implications of these differences in interpretation.  Here,
+both tests show a statistically significant relationship using a threshold of 0.05; however, the actual p-value does
+vary quite significantly.
+
+### Non-binary $\chi^2$ analysis
+
+Using a non-binary variable does not at all complicate the process of performing a $\chi$^2 analysis. Here I am using
+the same dataset but replacing Employment with Favorite Animal (`favAnimals`), a trinary variable.
+
+```{r}
+chisq.test(sim_data_robust_reg$favAnimals, sim_data_robust_reg$treatment) %>%
+  tidy()
+```
+
+## Multinomial Logistic Regression (MNL)
+
+A $\chi^2$ test offers a very quick and simple comparison of a singular categorical variable against another categorical
+variable. However, if we want to perform more complex analyses, say if we want to account for any covariates in the
+relationship or if we want to determine the effect of a quantitative variable on our categorical response, then $\chi^2$
+tests are insufficient. In this scenario, then the "go-to" option would be a multinomial logistic regression (mlogit)
+model.
+
+Noting again that a logistic model is the technically proper treatment for a categorical outcome with 2 levels, a
+multinomial logistic model practically generalizes the method for arbitrarily many levels. The 
+associated
+\href{https://mdrc365.sharepoint.com/:b:/r/sites/QuantMethods/Shared%20Documents/Guidance/QMG%20Categorical%20Outcomes%20Memo%20(December%202013).pdf?csf=1&web=1&e=wqRkvO}{QMG memo}
+also makes note of a Seemingly Unrelated Model to analyze categorical outcomes but that is also outside of the scope of
+this memo.
+
+For this example, we will be determining the effect of `treatment} on `favAnimals` while including
+`cities`, `eduLevel` and `pre_income_raw` as covariates, drawing from the
+`mdrcAnalysis::sim_data_robust_reg` dataset.
+
+```{r}
+# Loading dataset
+data(sim_data_robust_reg, package = "mdrcAnalysis")
+# Making categoricals explicit and with desired reference levels for treatment
+sim_data_robust_reg <- sim_data_robust_reg %>%
+  mutate(
+    favAnimals = factor(favAnimals, levels = c("cat", "croc", "dog")),
+    treatment = factor(treatment, levels = c(0, 1)),
+    cities = factor(cities)
+  )
+sim_data_robust_reg %>%
+  select(treatment, favAnimals, cities, eduLevel, pre_income_raw) %>%
+  head()
+```
+
+Here we will be using the `nnet` package to perform our analyses. This package is explicitly focused on
+neural network/machine learning work which funnily enough, logistic regressions are a common facet of.
+
+Running the model proceeds similarly to the analogous linear model; however, here I am scaling the quantitative
+`pre_income_raw` for performance and convergence reasons. It is unnecessary here but good to keep in mind if
+you run into computational issues.
+
+```{r}
+library(nnet)
+mlogit_model <- multinom(
+  favAnimals ~ cities + eduLevel + scale(pre_income_raw) + treatment,
+  data = sim_data_robust_reg
+)
+```
+
+Here we see that calling `multinom` actually produces output despite our direct assignment to a variable.
+MNL is an iterative estimation process and this output exists to inform the user of its progress every 10 iterations.
+This output can be removed by setting `trace = FALSE`.
+
+```{r}
+mlogit_model <- multinom(
+  favAnimals ~ cities + eduLevel + scale(pre_income_raw) + treatment,
+  data = sim_data_robust_reg,
+  trace = FALSE
+)
+```
+
+We can see simply cleaned results by once again using the `broom` package. The $p$-value listed here is The
+result of a Wald z-test which is not actually calculated by `nnet` but rather by `broom`. One
+significant reason why logistic models are often avoided is because of the difficulty in interpreting the results
+in human terms aside from direction of effect. 
+
+```{r}
+# Using broom
+tidy(mlogit_model) %>%
+  filter(term == "treatment1")
+```
+
+The `broom` also makes it trivial to exponentiate results which aids significantly in interpretability by 
+providing direct odds ratios. Here we can interpret the results as:
+
+\begin{itemize}
+  \item Given every other covariate in the model, being in the treatment group increases the odds of being in the "croc"
+  category vs the baseline "cat" category by 1.21.
+  \item Given every other covariate in the model, being in the treatment group increases the odds of being in the "dog"
+  category vs the baseline "cat" category by 1.57.
+  \item The $p$-value indicates the probability that, given all other coefficients are present, that the specified
+  coefficient is equal to 0.
+\end{itemize}
+
+```{r}
+# Using broom
+tidy(mlogit_model, exponentiate = TRUE) %>%
+  filter(term == "treatment1")
+```
+
+Showing equivalence to manually calculated Wald z-test.
+
+```{r}
+# Calculating z-scores
+z_mlogit_model <- summary(mlogit_model)$coefficients / summary(mlogit_model)$standard.errors
+print(z_mlogit_model)
+```
+
+```{r}
+# Calculating 2-tailed z-score test
+(1 - pnorm(abs(z_mlogit_model), 0, 1)) * 2
+```
+
+A single, $p$-value can be derived using a Wald chi-square test. This can be easily found using the `car`
+package.
+
+```{r}
+suppressPackageStartupMessages(library(car))
+Anova(mlogit_model)
+```
+
+Cleaning up the result using `broom`, we get a $p$-value of 0.271 with a null hypothesis that the coefficient
+is 0 in all logistic models.
+
+```{r}
+tidy(Anova(mlogit_model)) %>%
+  filter(term == "treatment")
+```
+
+### $G$-Computation
+
+The QMG memo actually recommends supplementing MNL with $G$-computation to calculate proper p-values and estimates on
+impacts. The code for this in SAS was written by the RTU; however, to my knowledge no equivalent has been written in R
+as of yet. This method uses a bootstrap estimate of standard error when performing its Wald statistic calculation which
+can significantly increase the time complexity of the calculation as the model and data grows more complex. Because this
+method has not yet been formally written in R, I recommend consulting the RTU/QMG for assistance on setting this up.
+
+## Linear mixed-effects model without "lower-level" predictors
+
+A mixed-effect model, which for our purposes are identical to hierarchical-level models (HLM) and mixed-level models 
+(MLM) are used at MDRC to model data with a natural "nesting" structure, e.g children within classrooms within schools.
+While mathematically possible, we have not yet found an R package to easily work with multinomial logistic mixed-effect
+models. Here we cover an actual categorical treatment used but I do include some possible areas of investigation at the
+end of this memo.
+
+For mixed effects models, we reference a omnibus test method that was proposed by Amy Taub and Marie-Andree Somers for
+the VIQI project. Note that there exists a mixed extract in the `mdrcAnalysis` package but I am not using it
+here for increased consistency between the quantitative and categorical response analysis code. Here I am synthetically
+generating data with nesting structure. It is extremely important to note here that the numbers that show up as a result
+of these analyses are basically nonsensical. The data and model construction are used in the absence of publicly 
+available, unproblematic data.
+
+```{r}
+# Modifying sim_data_robust_reg so that treatment is
+# block randomized and consistent across sites,
+# Each block has 2 sites
+sim_data_robust_reg <- sim_data_robust_reg %>%
+  mutate(Block = cut(as.integer(factor(sites)),
+    n_distinct(sites) / 2,
+    labels = seq_len(n_distinct(sites) / 2)
+  )) %>%
+  group_by(Block) %>%
+  mutate(treatment = as.integer(sites == head(sites, 1)))
+```
+
+
+If we want to calculate the treatment effect on `pre_income_raw`, a quantitative variable, we can simply specify the
+model as such using the `lme4` package. I am also calling the `emmeans` for adjusted means calculations and
+`broom.mixed` for its method extensions on `broom`.
+
+```{r}
+suppressPackageStartupMessages(library(lme4))
+suppressPackageStartupMessages(library(emmeans))
+suppressPackageStartupMessages(library(broom.mixed))
+lmer(pre_income_raw ~ treatment + (1 | sites), data = sim_data_robust_reg) %>%
+  emmeans("treatment",
+  options = get_emm_option("satterthwaite")) %>%
+  pairs()
+```
+
+Suppose then we wanted to identify the relationship between favAnimal (which is at the individual level) and the
+treatment while accounting for the site nesting. The following method will work provided we do not want to include
+block or any other non-site level predictors into our model. If you do want to include these variables, skip ahead to
+the section title "Linear mixed-effects model with other predictors".
+
+Calculating this for the categorical response actually separates the calculation of the p-value and the contrast
+estimate. First to calculate the p-value, we need to ensure that `treatment` is a true ${0,1}$ dummy because we will
+be using it as a quantitative response variable. 
+
+```{r}
+# Showing this is a 0, 1 integer vector
+str(unique(sim_data_robust_reg$treatment))
+```
+
+Now we calculate two models, a null and effect model. Both models use our new `treatment` variable as a 
+response variable and account for classroom nesting but only the effect model contains our categorical variable as a
+predictor.
+
+```{r}
+# Note that in actual work, these warnings indicate something deeply
+# wrong with your model, i.e. a lack of true nesting effects
+# However, I am ignoring them here for demonstration purposes
+mixed_null_model <- lmer(treatment ~ (1 | sites), data = sim_data_robust_reg)
+mixed_result_model <- lmer(treatment ~  favAnimals + (1 | sites), data = sim_data_robust_reg)
+```
+
+```{r}
+mixed_anova <- anova(mixed_result_model, mixed_null_model)
+tidy(mixed_anova)
+```
+
+The actual p-value can be extracted as such:
+
+```{r}
+na.omit(mixed_anova$`Pr(>Chisq)`)
+```
+
+Effect sizes are calculated individually using the dummy variables as outcomes; however, we will be ignoring the
+p-values. This is done functionally but the essence of the code is similar to the mixed effects quantitative response
+example shown previously.
+
+```{r}
+sim_data_robust_reg_dummied <- sim_data_robust_reg %>%
+  fastDummies::dummy_cols("favAnimals", remove_selected_columns = TRUE)
+mixed_effect_sizes <- paste0("favAnimals_", c("cat", "croc", "dog")) %>%
+  purrr::map(function(.response_variable) {
+    dummy_formula <- as.formula(paste(.response_variable, "~ treatment + (1 | sites)"),
+      env = rlang::env(!!!sim_data_robust_reg_dummied)
+    )
+    lmer(dummy_formula) %>%
+      emmeans("treatment", options = emmeans::get_emm_option("satterthwaite")) %>%
+      pairs() %>%
+      tidy() %>%
+      mutate(
+        Categorical_Level = .response_variable,
+        Effect_Size = estimate,
+        .keep = "none"
+      )
+  }) %>%
+  bind_rows()
+```
+
+We can now combine the p-value and effect sizes into a single table.
+
+```{r}
+mixed_effect_sizes %>%
+  mutate(Categorical_Level, Effect_Size,
+    P_Value = na.omit(mixed_anova$`Pr(>Chisq)`),
+    .keep = "none"
+  )
+```
+
+
+## Linear mixed-effects model with other predictors
+
+If we wanted to determine the treatment effect on `pre_income_raw` given nesting within sites while 
+accounting for Block, we can specify the model as such:
+
+```{r}
+lmer(pre_income_raw ~ treatment + Block + (1 | sites),
+  data = sim_data_robust_reg
+) %>%
+  emmeans("treatment",
+    options = get_emm_option("satterthwaite")
+  ) %>%
+  pairs()
+```
+
+Calculating this for the categorical response also separates the calculation of the p-value and the contrast
+estimate. First to calculate the p-value, we create a new dataset by aggregated by our nesting variable.
+
+```{r}
+sim_data_robust_reg_aggregated <- sim_data_robust_reg_dummied %>%
+  group_by(sites, treatment, Block) %>%
+  summarise(across(matches("^favAnimals"), mean),
+    .groups = "drop"
+  )
+```
+
+Now we calculate two linear models, a null and effect model. Both models use our dummy `treatment` variable as a 
+response variable and account for classroom nesting and block but only the effect model contains our aggregated
+dummies as a predictor.
+
+```{r}
+mixed_null_model <- stats::lm(treatment ~ Block,
+  data = sim_data_robust_reg_aggregated
+)
+mixed_result_formula <- as.formula(
+  paste(
+    "treatment ~",
+    paste0(
+      setdiff(
+        names(sim_data_robust_reg_aggregated),
+        c("treatment", "sites")
+      ),
+      collapse = " + "
+    )
+  ),
+  env = rlang::env(!!!sim_data_robust_reg_aggregated)
+)
+mixed_result_model <- lm(mixed_result_formula)
+```
+
+
+We now run an ANOVA test on the two models to get a test that accounts for all components of our categorical variable
+```{r}
+mixed_anova <- stats::anova(mixed_result_model, mixed_null_model)
+tidy(mixed_anova)
+```
+
+The actual p-value can be extracted as such:
+
+```{r}
+na.omit(mixed_anova$`Pr(>F)`)
+```
+
+The actual effect sizes are calculated using a multi-level model for each dummied predictor.
+
+```{r}
+mixed_effect_sizes <- paste0("favAnimals_", c("cat", "croc", "dog")) %>%
+  purrr::map(function(.response_variable) {
+    dummy_formula <- as.formula(
+      paste(.response_variable, "~ Block + treatment + (1|sites)"),
+      env = rlang::env(!!!sim_data_robust_reg_dummied)
+    )
+    lmer(dummy_formula) %>%
+      emmeans("treatment",
+        options = get_emm_option("satterthwaite")
+      ) %>%
+      pairs() %>%
+      tidy() %>%
+      mutate(
+        Categorical_Level = .response_variable,
+        Effect_Size = estimate,
+        False_P_Value = p.value,
+        .keep = "none"
+      )
+  }) %>%
+  bind_rows()
+mixed_effect_sizes
+```
+
+Just for demonstration purposes, you can see here the range of p-values reported by running these individual tests on
+the dummy variables. 
+
+We can now combine the p-value and effect sizes into a single table.
+
+```{r}
+mixed_effect_sizes %>%
+  mutate(Categorical_Level, Effect_Size,
+    P_Value = na.omit(mixed_anova$`Pr(>F)`),
+    .keep = "none"
+  )
+```
+
+### Alternative methods for mixed-effect models
+
+Note that by setting `family = binomial`, there is already a treatment for binary outcome variables using
+`lme4::glmer`. One method I saw in the `lme4` github would be to convert a multinomial model into
+the equivalent Poisson regression [@lee2017poisson]. `lme4::glmer` supports every GLM family listed in
+`stats::glm` which does includes Poisson regression which means we can use this equivalent Poisson formulation
+in `lme4::glmer`.
+
+A bayesian mixed effects model should also theoretically handle this situation using the `brms` package. This
+option has seen some traction online but it may be difficult to practically implement because it, like many software
+libraries designed around probabilistic programming and bayesian modelling, uses the "Stan" programming language in its
+backend which basically required another compilation step on program run.
+
+# References

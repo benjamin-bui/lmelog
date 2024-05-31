@@ -1,0 +1,15 @@
+Package: lmelog
+Title: Multinomial logistic mixed-effect modelling
+Version: 0.0.0.9000
+Authors@R: 
+    person("Benjamin", "Bui", , "benjaminbui97@example.com", role = c("aut", "cre"))
+Description: Provides support for multinomial logistic models while accounting for mixed effects. Powered by the
+    nlme and lme4 packages. Also provides support for G-computation for causal inference estimation.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+Imports: 
+    lme4
+Suggests: 
+    testthat
