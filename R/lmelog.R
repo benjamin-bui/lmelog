@@ -1,1 +1,1 @@
-#' lme
+#' Fit a multinomial logistic mixed-effects model
