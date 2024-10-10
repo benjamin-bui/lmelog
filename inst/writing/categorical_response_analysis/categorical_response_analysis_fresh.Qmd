@@ -1,0 +1,112 @@
+---
+output: officedown::rdocx_document
+bibliography: bibliography.bib
+csl: https://www.zotero.org/styles/apa-with-abstract?source=1
+---
+
+```{r, include = FALSE}
+library(knitr)
+knit_print.data.frame <- function(x, ...) {
+  res <- paste(c("", "", kable(x)), collapse = "\n")
+  asis_output(res)
+}
+# register the method
+registerS3method("knit_print", "data.frame", knit_print.data.frame)
+library(magrittr)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+library(officer)
+library(officedown)
+```
+
+# Nominal Categorical Response in Regression-Based Analyses
+
+Benjaimin Bui
+
+October 10, 2024
+
+Categorical variables provide an inherent problem when attempting to describe relationships mathematically.
+Many analyses we run involve regression analyses which inherently require that \textbf{ALL} variables be treated numerically.
+Categorical variables are normally converted into numerical variables in one of two ways, either via a direct scale mapping or by converting to \{0, 1\} dummy variables.
+This memo argues why this method, when applied to non-binary dependet variables, is statistically problematic and offers alternative solutions to the issue.
+
+This memo is divided into three main sections.
+The first section describes categorical variables, both statitially and how they are handled in R.
+This is followed by a statistical argument against the use of multiple dummy variables as a proxy for a nominal categorical variable when dealing with a multinomial noinal categorical response variable.
+Finally, we go through solutions for how to actually handle this statistical problem in R.
+
+```{r}
+#| echo: false
+block_toc()
+```
+
+## Categorical variables, in general and in R
+
+### What is a categorical and dummy variable?
+
+For our purposes, we can characterise variables as one of three types: quantitative, nominal categorical, and ordinal categorical [@SINHARAY20101].
+There is also a meaningful distinction between categorical variables with just two levels and those with more than two levels that we will also go into shortly.
+
+```{r, echo = FALSE}
+variable_tree <- DiagrammeR::grViz("
+digraph variable_tree {
+  node [shape = none]
+  variable; quantitative; categorical; nominal; ordinal
+    variable -> quantitative
+    variable -> categorical
+    categorical -> nominal
+    categorical -> ordinal
+}
+")
+variable_tree_path <- tempfile(fileext = ".png")
+variable_tree %>%
+  export_svg() %>%
+  charToRaw() %>%
+  rsvg_png(variable_tree_path, width = 1200)
+knitr::include_graphics(variable_tree_path)
+```
+
+A variable is quantiative if it is inherently ordered, and has an internally consistent, scalable definition of difference.
+For example, consider a variable representing age.
+Given any two values of age we can state that one age value is greater than or the same as the other age value.
+Moreover, this relationship is transitive as can be seen with the following.
+
+  12 years of age is greater than 8 years of age.
+  8 years of age is greater than 4 years of age.
+  Thus 12 years of age is necessarily also greater than 4 years of age.
+
+The difference property can be seen with how we can describe age with arbitrary precision.
+We can understand what is meant when we say something is 5 years of age but we can also understand what is meant when we say something is 4.999999999 years of age.
+Moreover the distance between 4.999999999 and 5 years of age is the same as 40.999999999 and 50 years of age.
+Although these properties seem trivial, indeed they are just a subset of the properties of the real numbers, categorical variables breaks with some of these assumptions.
+
+First we will break with the scalability property.
+Suppose we have a variable with the possible values: \{"Less than high school", "High school", "Bachelor's Degree", "Greater than Bachelor's Degree"\}.
+We can order this such that the ordering represents the average amount of time for completion: \{"Less than high school" < "High school" < "Bachelor's Degree" < "Greater than Bachelor's Degree"\}.
+The variable as it is represented does't allow for any further precision because their are no in-between values.
+This type of variable is known as an ordered categorical variable, or an ordinal variable.
+
+Now we will break with the ordering property.
+Here we'll use a fruit variable with the possible values of \{"apple", "orange", "grape"\}.
+There is no agreed upon way to order these values so we will refer to this as a nominal categorical variable, or a nominal variable for short.
+
+It is important to consider that many variables can be considered quantitiative, ordinal, or nominal depending on your interpretation and goals.
+Age was what we used as an exmaple of a quantitiative variable.
+We can effectively transform this into an ordinal variable by breaking up the age into the possible values: \{"Younger than 3", "3 to 18 years", "Older than 18"\}.
+We can also transform this into a nominal variable by making it into the variable \{"3 to 18 years", "Not 3 to 18 years"\}.
+All three of these variables describe age despite the differences in their representation.
+
+The nominal variable we made also qualifies as a dummy variable, or a binary variable.
+Binary and dummy variables are, for most intents and purposes, the same thing just from the perspective of a programmer and a statistician, respectively.
+The only difference between them is that dummy variables are technically always coded as a \{0, 1\} variable and that they are used to indicate the presence of some categorical trait.
+Dummy variables break up a single categorical variable into multiple different variables, each representing a specific possible value of the original categorical.
+Dummy variables are coded with a value space of \{0, 1\} because it allows for convenient mathematical manipulation and interpretation.
+It is possible to create $n$ dummy variables from a categorical variable with $n$ possible levels; however, $n-1$ dummy variables encodes the same amount of information.
+For example, consider our fruit categorical variable \{"apple", "orange", "grape"\}.
+We can separate this into an `apple` dummy variable that is 1 if the fruit is "apple" and 0 otherwise and an `orange` dummy variable that is 1 if the fruit is "orange" and 0 otherwise.
+If both `apple` and `orange` is 0, then we know that the fruit must be "grape" which makes creating an explicit `grape` variable redundant and can actually introduce issues of collinearity.
+
+
+## References
+
