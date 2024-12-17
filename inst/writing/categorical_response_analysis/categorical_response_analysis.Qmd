@@ -377,9 +377,12 @@ A logistic regression (logit) model is the most commonly used of the so-called b
 A logistic model binds the output between 0 and 1 which makes it better suited to the probability of the presence of a characteristic compared to an unbounded linear model.
 Technically, a logistic model is considered proper when you want to model binary outcomes with covariates.
 However, a linear model offer "qualitatively the same" results with higher immediate interpretability and practical consistency between running and analyzing quantitative and categorical outcomes [@porterLinearProbabilityModels2024].
-Please refer to the [QMG memo](https://mdrc365.sharepoint.com/sites/QuantMethods/Shared%20Documents/Guidance/QMG-Memo-on-Binary-Outcomes%20(January%202024).pdf) for their testing and conclusions on the topic.
+Please refer to this [QMG memo](https://mdrc365.sharepoint.com/sites/QuantMethods/Shared%20Documents/Guidance/QMG-Memo-on-Binary-Outcomes%20(January%202024).pdf) for their testing and conclusions on the topic.
+The memo recommends using a linear probability model, especially with clustered or multi-level data; however, a logistic model may be used for a possible small gains in precision.
+This gain is typically not realized with MDRC experiemental data as it largely occurs "when the treatment and control groups are not equally distributed and/or the effect is large."
 
 A multinomial logistic (mlogit) model generalizes the logit model to categorical response variables with arbitrarily many levels.
+When an outcome has more than two levels, we can no longer use a linear probability model in the same way that we could have with a binary outcome.
 For this example, we will be determining the effect of `treatment` on `favAnimals` while including `cities`, `eduLevel` and `pre_income_raw` as covariates, drawing from the
 `mdrcAnalysis::sim_data_robust_reg` dataset.
 
@@ -399,10 +402,17 @@ sim_data_robust_reg %>%
 ```
 
 Here we will be using the `nnet` package to perform our analyses.
-This package is designed for neural network/machine learning applications and logistic regression functions as the backbone for many of these sorts of applications.
+This package is so named because it is designed for neural network/machine learning applications.
+Logistic regressions functions as the backbone for many of these sorts of applications.
 
 Running the model operates similarly to running a linear model with `stats::lm`.
-Here, I am scaling the quantitative predictor variable `pre_income_raw` for performance and convergence issues.
+Here, I am scaling^[
+Scaling can refer to many types of quantitative remappings, in this case, we are z-score normalizing where each value is replaced by its z-score given the original variable's mean and standard deviation.
+There are other scaling/normalization methods like min-max, log, decimal scaling, etc. that have their own specific use-cases although z-score normalization is particularly common in regression work.
+Statistical and machine learning models often use algorithms based around distance metric calculations; however, these algorithms can fail and provide a converge issue if the original values are on a very large scale.
+Without scaling, variables with larger ranges can be weighted more in models which can cause bias in results.
+Z-score normalization shouldn't be done without some amount of discussion, especially with data containing large outliers or for data collected over time where the mean and standard deviation of each data collection varies.
+] the quantitative predictor variable `pre_income_raw` for performance and convergence issues.
 It can also help with coefficient interpretability and comparison with other coefficients [@baguleyStandardizedSimpleEffect2009].
 
 ```{r}
@@ -556,6 +566,7 @@ $$
 ## Linear mixed-effects model
 
 A mixed effect model (MEM), which for our purposes is identical to a hierarchical level model (HLM) and mixed level model (MLM), are used at MDRC to model data with a natural "nesting" structure, e.g. children within classrooms within schools or time periods nested in children for discrete time series analysis.
+It is an extension on 
 A simple $\chi^2$ test is inappropriate for nested data because these observations are not independent.
 While mathematically possible and explored, we have not yet found an R package that works with multinomial logistic MEMs.
 Here we cover methods for working with categorical response variables without MNL but I do include some possible areas of further investigation at the end of the memo.
