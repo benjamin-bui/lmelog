@@ -28,7 +28,7 @@ set.seed(744851063)
 
 Benjamin Bui
 
-October 10, 2024
+November 4, 2025
 
 
 Categorical variables provide an inherent problem when attempting to describe relationships mathematically.
@@ -38,7 +38,7 @@ This memo argues why this method, when applied to non-binary dependent variables
 
 This memo is divided into three main sections.
 The first section describes categorical variables, both statistically and how they are handled in R.
-This is followed by a statistical argument against the use of multiple dummy variables as a proxy for a nominal categorical variable when dealing with a multinomial nominal categorical response variable.
+This is followed by a statistical argument against the use of multiple dummy variables as a proxy for a nominal categorical variable when dealing with a multinomial nominal categorical response (outcome) variable.
 Finally, we go through solutions for how to handle this statistical problem in R.
 
 ```{r}
@@ -50,7 +50,7 @@ block_toc()
 
 ## What is a categorical and dummy variable?
 
-For our purposes, we can characterise variables as one of three types: quantitative, nominal categorical, and ordinal categorical [@SINHARAY20101].
+For our purposes, we can characterize variables as one of three types: quantitative, nominal categorical, and ordinal categorical [@SINHARAY20101].
 There is also a meaningful distinction between categorical variables with just two levels and those with more than two levels that we will also go into shortly.
 
 ```{r, echo = FALSE}
@@ -74,7 +74,7 @@ knitr::include_graphics(variable_tree_path)
 
 A variable is quantitative if it is inherently ordered, and has an internally consistent, scalable definition of difference.
 For example, consider a variable representing age.
-Given any two values of age we can state that one age value is greater than or the same as the other age value.
+Given any two values of age, we can state that one age value is greater than or the same as the other age value.
 Moreover, this relationship is transitive as can be seen with the following.
 
   12 years of age is greater than 8 years of age.
@@ -84,7 +84,7 @@ Moreover, this relationship is transitive as can be seen with the following.
 The difference property can be seen with how we can describe age with arbitrary precision.
 We can understand what is meant when we say something is 5 years of age, but we can also understand what is meant when we say something is 4.999999999 years of age.
 Moreover the distance between 4.999999999 and 5 years of age is the same as 40.999999999 and 50 years of age.
-Although these properties seem trivial, indeed they are just a subset of the properties of the real numbers, categorical variables break with some of these assumptions.
+Although these properties seem trivial, they are just a subset of the properties of the real numbers, categorical variables break with some of these assumptions.
 
 First, we will break with the scalability property.
 Suppose we have a variable with the possible values: \{"Less than high school", "High school", "Bachelor's Degree", "Greater than Bachelor's Degree"\}.
@@ -118,8 +118,8 @@ If both `apple` and `orange` is 0, then we know that the fruit must be "grape" w
 These three types of variables: quantitative, nominal, and ordered are represented in R as different classes of vector.
 Quantitative variables should be represented by the numeric class, nominal variables by the factor class, and ordinal variable by a combination of the ordered and factor classes.
 
-$ has 25 different types of vectors at its lowest level, most relevant here are `integer`, `double`, and `character` [@WICKHAM201912].
-You may notice that `factor` is not included here, that is because `factor` isn't actually implemented as a low level vector type, rather it is implemented via a `integer` vector and `character` vector.
+R has 25 different types of vectors at its lowest level, most relevant here are `integer`, `double`, and `character` [@WICKHAM201912].
+You may notice that `factor` is not included here, that is because `factor` isn't actually implemented as a low level vector type, rather it is implemented via an `integer` vector and `character` vector.
 A `factor` stores its data as an `integer` vector but also includes an attribute called `levels`
 This `levels` attribute is a `character` vector representing the sample space of your categorical variable.
 Unless the factor is `ordered`, the integers do **NOT** store or intend any meaning as a number.
@@ -148,10 +148,11 @@ levels(iris$Species)
 ```
 
 This mapping means that all values of 1 correspond to "setosa", 2 corresponds to "versicolor", and 3 corresponds to "virginica".
-Converting this into an `ordered` factor is simple (although I recommend being more explicit with your ordering).
+Converting this into an `ordered` factor is simple, as shown in the following code snippet.
 
 ```{r}
-as.ordered(iris_subset$Species)
+# If levels are unspecified, will adopt ordering as returned by levels()
+ordered(iris_subset$Species, levels = c("setosa", "versicolor", "virginica"))
 ```
 
 Here, we see the only difference in presentation is that the levels now use `<` instead of `,` as the delimiter which represents which levels are greater than which.
@@ -164,7 +165,8 @@ attributes(as.ordered(iris_subset$Species))
 
 This additional class is used by modelling packages to differentiate between nominal and ordered categorical variables and to apply different methods to these variables.
 Consider the most common method for fitting linear models: `stats::lm`.
-When given a plain `factor` as a covariate, `stats::lm` creates $n_{factor\_levels}-1$ dummy variables and runs the model treating these dummy variable as if they were quantitative.
+When given a `factor` as a covariate, `stats::lm` creates $n_{factor\_levels}-1$ dummy variables and runs the model treating these dummy variable as if they were quantitative, ommitting the first level.
+For those accustomed to to explicitly creating their own dummy variables, this is identical to running a `stats::lm` model where you are pre-defining the dummy variables and choosing the first level as the baseline level as the dummy to omit.
 However, if you pass an `ordered factor` as a covariate, then `stats::lm` will treat the variable as a polynomial model with $n_{factor\_levels}-1$ degrees.
 A polynomial model assumes that the levels of the `ordered factor` are equally spaced and that the space is continuous.
 The results it presents evaluate how well the relationship between the `ordered factor` and response variable can be described as linear, quadratic, cubic, etc.
@@ -178,7 +180,7 @@ A simple way to do this would be to adjust the `levels` such that the values we 
 The first value in the `levels` attribute is also used when calculating contrasts as the "baseline".
 For example, consider our fruit variable: \{"apple", "orange", "grape"\}.
 If we used this variable in a model and requested contrasts on fruit, then our results would, by default, present the impact of "orange" compared to "apple" and the impact of "grape" compared to "apple".
-This doesn't have any impact in the computation of the model itself but it affects the direct interpretability of the coefficients.
+This doesn't have any impact in the computation of the model itself, but it affects the direct interpretability of the coefficients.
 However, because we shouldn't make a variable an `ordered factor` unless we explicitly want it to be treated as an ordinal, we can instead just change the `level` attribute.
 A simple way of doing this would be using `stats::relevel` or `forcats::fct_relevel`
 
@@ -192,7 +194,7 @@ forcats::fct_relevel(iris_subset$Species, "virginica", "versicolor", "setosa")
 
 # The potential problems with dummy response variables
 
-This section will cover why we do not want to substitute nominal categorical variables with dummy variables.
+This section will cover the potential problems with substituting a nominal response variable with multiple dummy response variables.
 
 Transforming nominal categorical variables into dummy variables is accepted practice when being done on predictor variables for a mode.
 As stated previously, this is how most statistical modelling packages in R automatically handle `factor` variables.
@@ -287,8 +289,9 @@ Although presenting 8.7% of these results as statistically significant isn't too
 
 # Avoiding dummy response variables
 
-We ideally want a test that provides a singular result on our categorical response variable.
-Although we did discuss ordinal variables previously, that largely to avoid the accidental conflation of nominal and ordinal variables.
+There are cases where performing these individual tests can be useful, like when exploring which, if any, of the response levels are driving results.
+When investigating the significance of response variable as a whole though, we would prefer a test that could provide a singular result.
+Note that although we did discuss ordinal variables previously, that was largely to avoid the accidental conflation of nominal and ordinal variables.
 The solutions presented henceforth should only be applied to nominal response variables.
 
 The simplest solution to the issue is to use a quantitative variable instead.
@@ -299,7 +302,7 @@ If this is the case, then continue on to one of the methods below.
 
 ## The simple $\chi^2$ test
 
-Although a bit of an oversimplification, a $chi^2$ test serves an analogous function to categorical variables as a $t$-test is to quantitative variables.
+Although a bit of an oversimplification, a $\chi^2$ test serves an analogous function to categorical variables as a $t$-test is to quantitative variables.
 This test is useful when determining the relationship between two categorical variables, e.g. race and your treatment variable but it is not useful when attempting to account for other covariates.
 These $\chi^2$ tests are often used at MDRC for early investigations of data regarding baseline equivalence and non-response bias, both cases where there is a relatively clear categorical vs categorical relationship we are trying to ascertain.
 
@@ -326,7 +329,7 @@ tidy(chisq.test(
 ))
 ```
 
-Because these two variables are ${9,1}$ dummy variables, we can also treat them quantitatively and pass them to a paired, two-sided $t$-test to compare our results.
+Because these two variables are $\{0,1\}$ dummy variables, we can also treat them quantitatively and pass them to a paired, two-sided $t$-test to compare our results.
 
 ```{r}
 tidy(t.test(
@@ -373,13 +376,14 @@ tidy(
 A $\chi^2$ test offers a very quick and simple comparison of a singular categorical variable against another categorical variable.
 However, if we want to perform more complex analyses, say if we want to account for any covariates in the relationship or if we want to determine the effect of a quantitative variable on our categorical response, then $\chi^2$ tests are insufficient.
 
-A logistic regression (logit) model is the most commonly used of the so-called binary regression models.
+A logistic regression (logit) model is a very widely used binary regression model.
 A logistic model binds the output between 0 and 1 which makes it better suited to the probability of the presence of a characteristic compared to an unbounded linear model.
 Technically, a logistic model is considered proper when you want to model binary outcomes with covariates.
 However, a linear model offer "qualitatively the same" results with higher immediate interpretability and practical consistency between running and analyzing quantitative and categorical outcomes [@porterLinearProbabilityModels2024].
 Please refer to this [QMG memo](https://mdrc365.sharepoint.com/sites/QuantMethods/Shared%20Documents/Guidance/QMG-Memo-on-Binary-Outcomes%20(January%202024).pdf) for their testing and conclusions on the topic.
 The memo recommends using a linear probability model, especially with clustered or multi-level data; however, a logistic model may be used for a possible small gains in precision.
-This gain is typically not realized with MDRC experiemental data as it largely occurs "when the treatment and control groups are not equally distributed and/or the effect is large."
+This gain is typically not realized with MDRC experimental data as it largely occurs "when the treatment and control groups are not equally distributed and/or the effect is large."
+Practically speaking, most projects at MDRC use a linear instead of logistic regression model because the potential gains in precision are not considered to be worth the additional complications in interpretability and comparison with quantitative linear response models.
 
 A multinomial logistic (mlogit) model generalizes the logit model to categorical response variables with arbitrarily many levels.
 When an outcome has more than two levels, we can no longer use a linear probability model in the same way that we could have with a binary outcome.
@@ -453,7 +457,7 @@ $$
 odds = \frac{p(x)}{1-p(x)}
 $$
 
-Because of how difficult it is to intuit the meaning of logistic model coefficients; they are frequently converted into "odds ratios".
+Because of how difficult it is to intuit the meaning of logistic model coefficients; they are frequently converted into "odds ratios" which are admittedly also fairly unintuitive.
 This is done by exponentiating the coefficients, changing them from log odds into direct odds.
 `broom` makes this simple to do via the `exponentiate` argument.
 
@@ -572,7 +576,7 @@ While mathematically possible and explored, we have not yet found an R package t
 Here we cover methods for working with categorical response variables without MNL but I do include some possible areas of further investigation at the end of the memo.
 The methods covered here do use dummied response variables but shows how to handle them in aggregate, thereby avoiding the previously listed issues with multiple dummy variable analysis.
 
-Here we reference an omnibus test method that was proposed by Amy Taub and Marie-Andree Somers for the VIQI projects.
+Here we reference an omnibus test method that was proposed by Amy Taub and Marie-Andree Somers for the VIQI project.
 Note that there exists a mixed extract in the `mdrcAnalysis` package but, I am not using it here for increased consistency between the code used to demonstrate quantitative and categorical response analysis.
 
 For these examples, we will be using and modifying the `merTools::hsb` dataset which is a subset of the "1982 High School and Beyond survey" for its pre-existing nesting structure.
@@ -785,14 +789,108 @@ mixed_contrasts %>%
   mutate(P_Value = na.omit(aggregated_anova$`Pr(>F)`))
 ```
 
-### Alternative methods for mixed-effect models
+### Alternative untested methods for mixed-effect models 
 
 Note that by setting `family = binomial`, there is already a treatment for binary outcome variables using `lme4::glmer`.
 One method I saw in the [`lme4` github](https://github.com/lme4/lme4/issues/594) would be to convert a multinomial model into the equivalent Poisson regression [@lee2017poisson].
 `lme4::glmer` supports every GLM family listed in `stats::glm` which does includes Poisson regression which means we can use this equivalent Poisson formulation in `lme4::glmer`.
-However, this is easier said than done and there are also concerns about the computational complexity of such a technique.
 
 A Bayesian mixed effects model should also theoretically handle this situation using the `brms` package.
 This option has seen some traction online, but it may be difficult to practically implement because it, like many software libraries designed around probabilistic programming and Bayesian modelling, uses the "Stan" programming language in its backend which basically required another compilation step on program run.
+
+**A brief aside on the Poisson trick**
+
+The Multinomial-Poisson (MP) transformation was partially motivated by the high computational complexity involved the number of groups increases [@bakerMultinomialPoissonTransformation1994].
+This transformation appeared to be theoretically sound; however, it also had issues with computational complexity but it did have the advantage of being able to leverage pre-existing statistical packages that frequently supported Poisson distributions.
+There has been work done since to improve the viability of the method with real world data and a package was just released onto CRAN that seeks to simplify the process of performing the MP transformation when using `stats::glm` or `lme4::glmer`.
+
+Here I attempt to summarise the process of practically performing this transformation.
+Proof of model equivalency is shown by [@lee2017poisson] although I don't have access to the full text by [@bakerMultinomialPoissonTransformation1994].
+
+For these examples, we will be using and modifying the `merTools::hsb` dataset which is a subset of the "1982 High School and Beyond survey" for its pre-existing nesting structure.
+We will be using the following variables in our example model:
+
+* `schid` - School id
+* `mathach` - Performance on standardized math assessment
+* `mathcat` - A categorical variable indicating quantile in `mathach`
+* `schtype` - Dummy variable indicating if the school is private
+* `minority` - Dummy variable indicating if student is non-white or white
+* `ses` - Student socio-economic status
+
+
+```{r results = "asis"}
+data("hsb", package = "merTools")
+hsb_cat <- hsb %>%
+  # Only keeping data with our desired outcome variable
+  filter(!is.na(mathach)) %>%
+  mutate(
+    # Creating a multinomial categorical variable
+    # by breaking up into 25% quantiles
+    mathcat = factor(cut(mathach, 4,
+      labels = c("First", "Second", "Third", "Fourth")
+    )),
+    # Making other categoricals explicit factors
+    across(c(schid, schtype), as.factor),
+    # Making an explicit unique observation variable
+    observation = factor(row_number())
+  ) %>%
+  # Excluding unnecesary variables
+  select(-female, -size, -meanses) %>%
+  # Reducing group count for runtime
+  filter(schid %in% head(unique(schid), 5))
+head(hsb_cat)
+```
+
+For our example model, we are using `mathcat` as a multinomial response variable with $Q=4$ possible values.
+As covariates, we have `minority` and `ses` while `schtype` serves as our predictor of interest.
+Individual observations are clustered within the school variable `schid`.
+If our response variable was instead a quantitative variable, we could model this relationship using `lme4` model formula specifications as:
+$$
+matchat \sim minority + ses + schtype + (1|schid)
+$$
+
+
+However, we can't actually run this model using `lmer` as only numeric responses are supported.
+
+```{r error = TRUE}
+lme4::lmer(mathcat ~ minority + ses + schtype + (1 | schid), data = hsb_cat)
+```
+
+Poisson regression models are designed to model count data and so we must convert our categorical response variable into long count data.
+Practically speaking, this means transforming each row observation into $Q$ rows for each level of the categorical response variable, adding a `count` column that is 1 for the corresponding category and 0 otherwise.
+
+```{r, results = "asis"}
+hsb_count <- hsb_cat %>%
+  fastDummies::dummy_cols("mathcat", remove_selected_columns = TRUE) %>%
+  pivot_longer(
+    cols = starts_with("mathcat_"),
+    names_to = "mathcat",
+    names_transform = \(x) factor(str_remove(x, "mathcat_"),
+      levels = c("First", "Second", "Third", "Fourth")
+    ),
+    values_to = "count"
+  )
+head(hsb_count)
+```
+
+We now proceed to run this as a Poisson mixed-effects model.
+All of our original fixed effect covariates must now be specified as interacting with our new categorical representation `mathcat` and we also include `observation` as a covariate.
+Our new response variable will be the numeric variable `count`
+
+```{r eval = FALSE}
+poisson_start <- Sys.time()
+poisson_model <- glmer(count ~ observation +
+  minority * mathcat +
+  ses * mathcat +
+  schtype * mathcat +
+  (1|schid),
+  data = hsb_count,
+  family = "poisson")
+poisson_end <- Sys.time()
+difftime(poisson_start, poisson_end)
+```
+
+Attempting to run this model doesn't result in an error per-se but just this single outcome has an impractically long runtime (I left this one model running for ~6 hours and still found no result).
+Coupled with the common MDRC practice of having many outcomes and sensitivity checks, I don't think its particularly practical to recommend this for of model specification for the types of datasets common to our organization.
 
 # References

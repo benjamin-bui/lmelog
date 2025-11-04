@@ -1,0 +1,160 @@
+---
+output: officedown::rdocx_document
+bibliography: ../bibliography.bib
+csl: https://www.zotero.org/styles/apa-with-abstract?source=1
+eval:
+  results: asis
+---
+
+```{r}
+#| include: FALSE
+library(knitr)
+library(flextable)
+library(magrittr)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+library(officer)
+library(officedown)
+library(fastDummies)
+library(lme4)
+suppressPackageStartupMessages(library(tidyverse))
+set.seed(744851063)
+knit_print.data.frame <- function(x, ...) {
+  alignment <- map_chr(x, \(col) ifelse(is.numeric(col), "right", "left"))
+  if (nrow(x) > 8) {
+    x <- mutate(x, across(everything(), as.character))
+    last_row <- tail(x, 1)
+    top_rows <- head(x, 6)
+    x <- bind_rows(top_rows, mutate(last_row, across(everything(), \(col) "-")), last_row)
+  }
+  x <- autofit(flextable(x))
+  flextable_to_rmd(x)
+}
+# register the method
+registerS3method("knit_print", "data.frame", knit_print.data.frame)
+```
+
+**Investigating the Use of the Poisson Trick to Model Multinomial Categorical Response with Mixed-Effects**
+
+
+Benjamin Bui
+
+December 30, 2024
+
+The `lme4` R package uses the distribution families provided by the `stats` package.
+These families are described in more detail by calling `?stats::family` but of note is the presence of the `binomial` family for binary cateogrical response variables but no family for multinomial categorical response variables.
+There was [some discussion](https://github.com/lme4/lme4/issues/594) on formally adding this support; however, this has still not been released and the current recommendation if using the `lme4` pacakge is to utilize "he "Poisson trick" to reformulate the multinomial log-likelihood as an equivalent Poisson log-likelihood."
+
+This memo serves to investigate the suggested approach and determine the practicality of its implementation.
+
+```{r}
+#| echo: false
+block_toc()
+```
+
+## The "Poisson Trick"
+
+The Multinomial-Poisson (MP) transformation was partially motivated by the high computational complexity involved the number of groups increases [@bakerMultinomialPoissonTransformation1994].
+This transformation appeared to be theorectically sound; however, it also had issues with computational complexity but it did have the advantage of being able to leverage pre-existing statistical packages that frequently supported Poisson distributions.
+There has been work done since to improve the viability of the method with real world data and a package was just released onto CRAN that seeks to simplfiy the process of performing the MP transformation when using `stats::glm` or `lme4::glmer`.
+
+Here I attempt to summarise the process of practically performing this transformation.
+Proof of model equivalency is shown by [@lee2017poisson] although I don't have access to the full text by [@bakerMultinomialPoissonTransformation1994].
+
+For these examples, we will be using and modifying the `merTools::hsb` dataset which is a subset of the "1982 High School and Beyond survey" for its pre-existing nesting structure.
+We will be using the following variables in our example model:
+
+* `schid` - School id
+* `mathach` - Performance on standardized math assessment
+* `mathcat` - A categorical variable indicating quantile in `mathach`
+* `schtype` - Dummy variable indicating if the school is private
+* `minority` - Dummy variable indicating if student is non-white or white
+* `ses` - Student socio-economic status
+
+
+```{r results = "asis"}
+data("hsb", package = "merTools")
+hsb_cat <- hsb %>%
+  # Only keeping data with our desired outcome variable
+  filter(!is.na(mathach)) %>%
+  mutate(
+    # Creating a multinomial categorical variable
+    # by breaking up into 25% quantiles
+    mathcat = factor(cut(mathach, 4,
+      labels = c("First", "Second", "Third", "Fourth")
+    )),
+    # Making other categoricals explicit factors
+    across(c(schid, schtype), as.factor),
+    # Making an explicit unique observation variable
+    observation = factor(row_number())
+  ) %>%
+  # Excluding unnecesary variables
+  select(-female, -size, -meanses) %>%
+  # Reducing group count for runtime
+  filter(schid %in% head(unique(schid), 5))
+hsb_cat
+```
+
+For our example model, we are using `mathcat` as a multinomial response variable with $Q=4$ possible values.
+As covariates, we have `minority` and `ses` while `schtype` serves as our predictor of interest.
+Individual observations are clustered within the school variable `schid`.
+If our response variable was instead a quantatiative variable, we could model this relationship using `lme4` model formula specifications as:
+$$
+matchat \sim minority + ses + schtype + (1|schid)
+$$
+
+
+However, we can't actually run this model using `lmer` only numeric responses are supported.
+
+```{r error = TRUE}
+lme4::lmer(mathcat ~ minority + ses + schtype + (1 | schid), data = hsb_cat)
+```
+
+Poisson regression models are designed to model count data and so we must convert our categorical response variable into long count data.
+Practically speaking, this means transforming each row observation into $Q$ rows for each level of the categorical response variable, adding a `count` column that is 1 for the corresponding cateoggory and 0 otherwise.
+
+```{r, results = "asis"}
+hsb_count <- hsb_cat %>%
+  dummy_cols("mathcat", remove_selected_columns = TRUE) %>%
+  pivot_longer(
+    cols = starts_with("mathcat_"),
+    names_to = "mathcat",
+    names_transform = \(x) factor(str_remove(x, "mathcat_"),
+      levels = c("First", "Second", "Third", "Fourth")
+    ),
+    values_to = "count"
+  )
+hsb_count
+```
+
+We now proceed to run this as a Poisson mixed-effects model.
+All of our original fixed effect covariatesmust now be specified as interacting with our new categorical representation `mathcat` and we also include `observation` as a covariate.
+Our new response variable will be the numeric variable `count`
+
+```{r eval = FALSE}
+poisson_start <- Sys.time()
+poisson_model <- glmer(count ~ observation +
+  minority * mathcat +
+  ses * mathcat +
+  schtype * mathcat +
+  (1|schid),
+  data = hsb_count,
+  family = "poisson")
+poisson_end <- Sys.time()
+difftime(poisson_start, poisson_end)
+```
+
+Attempting to run this model doesn't result in an error per-se but just this single outcome has an impractically long runtime.
+Coupled with the common MDRC practice of having many outcomes and sensitivity checks, I don't think its particularly practical to recommend this for of model specification for the types of datasets common to our organization.
+
+
+## `multpois`
+
+The `multpois` package, developed by Wobbrock of University of Washington and released in October 2024, attempts to extend the `glm` and `glmer` methods to multinomial response variables using the Poisson trick.
+It appears to be based on the transformation as described by Baker and may suffer from impractically long computational time with medium to large sized datasets.
+
+Reading through the code, it does seem to follow the algorithm as described; however, it remains computationally impractical for most real datasets (especially given our relatively limited resources).
+Given more time, it may be possible to detemine a lower bound of model complexity where the option is feasible and to determine the potential gains compared to the aggregated anova approach we currently use.
+
+
